@@ -12,7 +12,7 @@ All lab work is organized **week-wise** for clarity and evaluation.
 - **Name:** Alok kumar
 - **Enrollment Number:** E23CSEU1063  
 - **Course:** B.Tech (Computer Science Engineering)  
-- **University:** Bennett University  
+- **Bennett University  
 
 ---
 
