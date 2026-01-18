@@ -1,6 +1,4 @@
-**# GenAI-Monday-Lab
-GenAI Monday Lab – CSET-419
-**# GenAI Monday Lab
+# GenAI Monday Lab
 
 **CSET-419 · Introduction to Generative AI**
 
