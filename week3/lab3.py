@@ -1,156 +1,146 @@
-# Week 3 – Variational Autoencoder (VAE)
-# Course: CSET-419 – Introduction to Generative AI
-
-import tensorflow as tf
-from tensorflow.keras import layers, Model
 import numpy as np
 import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.datasets import mnist
+from tensorflow.keras.layers import Input, Conv2D, Conv2DTranspose, Flatten, Dense, Reshape
+from tensorflow.keras.models import Model
+from matplotlib.backends.backend_pdf import PdfPages
+import os
 
-# =========================
-# Dataset (Choose one)
-# =========================
-USE_FASHION_MNIST = True  # Set False for MNIST
+# -------------------------
+# Setup
+# -------------------------
+np.random.seed(237)
+tf.random.set_seed(237)
 
-if USE_FASHION_MNIST:
-    (x_train, _), (x_test, _) = tf.keras.datasets.fashion_mnist.load_data()
-else:
-    (x_train, _), (x_test, _) = tf.keras.datasets.mnist.load_data()
+# -------------------------
+# Load MNIST
+# -------------------------
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
 
-# Normalize and reshape
 x_train = x_train.astype("float32") / 255.0
-x_test = x_test.astype("float32") / 255.0
-x_train = np.expand_dims(x_train, -1)
-x_test = np.expand_dims(x_test, -1)
+x_test  = x_test.astype("float32") / 255.0
 
-# =========================
+x_train = x_train.reshape(-1, 28, 28, 1)
+x_test  = x_test.reshape(-1, 28, 28, 1)
+
+# -------------------------
 # Parameters
-# =========================
-LATENT_DIM = 2
-BATCH_SIZE = 128
-EPOCHS = 20
+# -------------------------
+latent_dim = 2
+batch_size = 32
+epochs = 10
 
-# =========================
-# Sampling (Reparameterization Trick)
-# =========================
-def sampling(args):
-    z_mean, z_log_var = args
-    epsilon = tf.random.normal(shape=tf.shape(z_mean))
-    return z_mean + tf.exp(0.5 * z_log_var) * epsilon
-
-# =========================
+# -------------------------
 # Encoder
-# =========================
-encoder_inputs = layers.Input(shape=(28, 28, 1))
-x = layers.Conv2D(32, 3, activation="relu", strides=2, padding="same")(encoder_inputs)
-x = layers.Conv2D(64, 3, activation="relu", strides=2, padding="same")(x)
-x = layers.Flatten()(x)
-x = layers.Dense(16, activation="relu")(x)
+# -------------------------
+encoder_input = Input(shape=(28, 28, 1))
 
-z_mean = layers.Dense(LATENT_DIM, name="z_mean")(x)
-z_log_var = layers.Dense(LATENT_DIM, name="z_log_var")(x)
-z = layers.Lambda(sampling, name="z")([z_mean, z_log_var])
+x = Conv2D(32, 3, activation="relu", padding="same")(encoder_input)
+x = Conv2D(64, 3, activation="relu", strides=2, padding="same")(x)
+x = Conv2D(64, 3, activation="relu", padding="same")(x)
+x = Flatten()(x)
+x = Dense(32, activation="relu")(x)
 
-encoder = Model(encoder_inputs, [z_mean, z_log_var, z], name="encoder")
-encoder.summary()
+latent = Dense(latent_dim, name="latent")(x)
 
-# =========================
+encoder = Model(encoder_input, latent)
+
+# -------------------------
 # Decoder
-# =========================
-latent_inputs = layers.Input(shape=(LATENT_DIM,))
-x = layers.Dense(7 * 7 * 64, activation="relu")(latent_inputs)
-x = layers.Reshape((7, 7, 64))(x)
-x = layers.Conv2DTranspose(64, 3, activation="relu", strides=2, padding="same")(x)
-x = layers.Conv2DTranspose(32, 3, activation="relu", strides=2, padding="same")(x)
-decoder_outputs = layers.Conv2DTranspose(1, 3, activation="sigmoid", padding="same")(x)
+# -------------------------
+decoder_input = Input(shape=(latent_dim,))
+x = Dense(14 * 14 * 64, activation="relu")(decoder_input)
+x = Reshape((14, 14, 64))(x)
+x = Conv2DTranspose(64, 3, activation="relu", padding="same")(x)
+x = Conv2DTranspose(32, 3, activation="relu", strides=2, padding="same")(x)
+decoder_output = Conv2D(1, 3, activation="sigmoid", padding="same")(x)
 
-decoder = Model(latent_inputs, decoder_outputs, name="decoder")
-decoder.summary()
+decoder = Model(decoder_input, decoder_output)
 
-# =========================
-# VAE Model
-# =========================
-class VAE(Model):
-    def __init__(self, encoder, decoder, **kwargs):
-        super(VAE, self).__init__(**kwargs)
-        self.encoder = encoder
-        self.decoder = decoder
+# -------------------------
+# Autoencoder (STABLE)
+# -------------------------
+autoencoder_output = decoder(encoder(encoder_input))
+autoencoder = Model(encoder_input, autoencoder_output)
 
-    def train_step(self, data):
-        with tf.GradientTape() as tape:
-            z_mean, z_log_var, z = self.encoder(data)
-            reconstruction = self.decoder(z)
-
-            recon_loss = tf.reduce_mean(
-                tf.reduce_sum(
-                    tf.keras.losses.binary_crossentropy(data, reconstruction),
-                    axis=(1, 2)
-                )
-            )
-
-            kl_loss = -0.5 * tf.reduce_mean(
-                tf.reduce_sum(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=1)
-            )
-
-            total_loss = recon_loss + kl_loss
-
-        grads = tape.gradient(total_loss, self.trainable_weights)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
-
-        return {
-            "loss": total_loss,
-            "reconstruction_loss": recon_loss,
-            "kl_loss": kl_loss,
-        }
-
-vae = VAE(encoder, decoder)
-vae.compile(optimizer=tf.keras.optimizers.Adam())
-
-# =========================
-# Training
-# =========================
-vae.fit(
-    x_train,
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
-    validation_data=(x_test, None)
+autoencoder.compile(
+    optimizer="adam",
+    loss="binary_crossentropy"
 )
 
-# =========================
-# Reconstruction Output
-# =========================
-def show_reconstruction(model, data):
-    z_mean, _, _ = model.encoder(data[:10])
-    reconstructed = model.decoder(z_mean)
+# -------------------------
+# Train
+# -------------------------
+history = autoencoder.fit(
+    x_train, x_train,
+    epochs=epochs,
+    batch_size=batch_size,
+    shuffle=True,
+    validation_data=(x_test, x_test)
+)
 
-    plt.figure(figsize=(10, 4))
-    for i in range(10):
-        plt.subplot(2, 10, i + 1)
-        plt.imshow(data[i].squeeze(), cmap="gray")
+# -------------------------
+# Save ALL outputs to PDF
+# -------------------------
+pdf_path = os.path.join(os.getcwd(), "vertopal.com_Lab3.pdf")
+
+with PdfPages(pdf_path) as pdf:
+
+    # 1. Sample images
+    plt.figure(figsize=(6,6))
+    idxs = [13, 690, 2375, 42013]
+    for i, idx in enumerate(idxs):
+        plt.subplot(2,2,i+1)
+        plt.imshow(x_train[idx,:,:,0], cmap="gnuplot2")
         plt.axis("off")
+    plt.suptitle("Sample MNIST Images")
+    pdf.savefig()
+    plt.close()
 
-        plt.subplot(2, 10, i + 11)
-        plt.imshow(reconstructed[i].numpy().squeeze(), cmap="gray")
-        plt.axis("off")
+    # 2. Training loss
+    plt.figure(figsize=(8,5))
+    plt.plot(history.history["loss"], label="Train")
+    plt.plot(history.history["val_loss"], label="Validation")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training Loss Curve")
+    plt.legend()
+    pdf.savefig()
+    plt.close()
 
-    plt.suptitle("Original (Top) vs Reconstructed (Bottom)")
-    plt.show()
+    # 3. Latent space
+    z_test = encoder.predict(x_test)
+    plt.figure(figsize=(8,8))
+    sc = plt.scatter(z_test[:,0], z_test[:,1], c=y_test, cmap="brg", s=5)
+    plt.colorbar(sc)
+    plt.title("Latent Space Representation")
+    plt.xlabel("z1")
+    plt.ylabel("z2")
+    pdf.savefig()
+    plt.close()
 
-show_reconstruction(vae, x_test)
+    # 4. Generated manifold
+    n = 20
+    digit_size = 28
+    figure = np.zeros((digit_size*n, digit_size*n))
 
-# =========================
-# Generate New Images
-# =========================
-def generate_images(decoder, n=20):
-    z_sample = tf.random.normal(shape=(n, LATENT_DIM))
-    generated = decoder(z_sample)
+    grid = np.linspace(-3, 3, n)
 
-    plt.figure(figsize=(10, 4))
-    for i in range(n):
-        plt.subplot(2, 10, i + 1)
-        plt.imshow(generated[i].numpy().squeeze(), cmap="gray")
-        plt.axis("off")
+    for i, yi in enumerate(grid):
+        for j, xi in enumerate(grid):
+            z_sample = np.array([[xi, yi]])
+            digit = decoder.predict(z_sample)[0].reshape(28,28)
+            figure[
+                i*digit_size:(i+1)*digit_size,
+                j*digit_size:(j+1)*digit_size
+            ] = digit
 
-    plt.suptitle("Generated Images from Latent Space")
-    plt.show()
+    plt.figure(figsize=(10,10))
+    plt.imshow(figure, cmap="gnuplot2")
+    plt.axis("off")
+    plt.title("Generated Digit Manifold")
+    pdf.savefig()
+    plt.close()
 
-generate_images(decoder)
+print(f"PDF created successfully → {pdf_path}")
